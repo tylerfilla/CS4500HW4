@@ -7,6 +7,7 @@
  * - I took this assignment as an opportunity to practice physics-based animation.
  * - The program is written in C99 with the glad, GLFW, and NanoVG libraries and the platform OpenGL implementation thing.
  * - I have no qualms with global variables (mutable, even) in a simple single-threaded program.
+ * - I did not try to draw arrowheads on self-referencing arcs.
  */
 
 #include <math.h>
@@ -114,19 +115,18 @@ static void updateCirclePhysics() {
     float forceY = 0;
 
     // Subtract force due to friction (this is pretty hacky)
+    // It uses *roughly* the current velocity and an arbitrary factor
+    // Needless to say, it could be better!
     forceX -= 50 * circle->size * (circle->currentX - circle->lastX);
     forceY -= 50 * circle->size * (circle->currentY - circle->lastY);
 
-/*
-    // Add force due to central attraction
-    forceX += 100 * fmax(0, fbWidth / 2 - circle->currentX);
-    forceX += 100 * fmin(0, fbWidth / 2 - circle->currentX);
-    forceY += 100 * fmax(0, fbHeight / 2 - circle->currentY);
-    forceY += 100 * fmin(0, fbHeight / 2 - circle->currentY);
-*/
+    // Factor in circle-side repulsion
+    forceX += 10000 * circle->size / fmax(1, circle->currentX);
+    forceX += 10000 * circle->size / fmin(-1, circle->currentX - fbWidth);
+    forceY += 10000 * circle->size / fmax(1, circle->currentY);
+    forceY += 10000 * circle->size / fmin(-1, circle->currentY - fbHeight);
 
-/*
-    // Add gravity among circles
+    // Factor in circle-circle repulsion
     for (int j = 0; j < numCircles; ++j) {
       struct circle* otherCircle = circles[j];
 
@@ -139,62 +139,47 @@ static void updateCirclePhysics() {
 
       // Ignore "close enough" circles
       // This is a hack that avoids some divisions by zero
-      if (dist < 0.0001)
+      if (dist < 0.01)
         continue;
 
-      // Compute magnitude of gravitational force
+      // Compute magnitude of repulsive force
       float mag = 100 * (circle->size * otherCircle->size) / (dist * dist);
 
       // Compute vector components of force
-      forceX += mag * -dx;
-      forceY += mag * -dy;
+      forceX += mag * dx;
+      forceY += mag * dy;
     }
-*/
 
-    // Add springs between pairs of circles
-    for (int j = 0; j < numCircles; ++j) {
-      struct circle* otherCircle = circles[j];
+    // Go over all arrows from this circle
+    for (int j = 0; j < numArrows; ++j) {
+      struct arrow* arrow = arrows[j];
 
-      float dx = circle->currentX - otherCircle->currentX;
-      float dy = circle->currentY - otherCircle->currentY;
-
-      double dist = sqrt(dx * dx + dy * dy);
-
-      if (dist < 0.0001)
+      if (arrow->src != circle)
         continue;
 
-      forceX += 10000 * (dist - 250) * -dx / dist;
-      forceY += 10000 * (dist - 250) * -dy / dist;
+      // Get displacement of circles
+      float dx = arrow->src->currentX - arrow->dest->currentX;
+      float dy = arrow->src->currentY - arrow->dest->currentY;
+
+      // Compute Euclidian distance between circles
+      double dist = sqrt(dx * dx + dy * dy);
+
+      // "Close enough" rejection like above
+      if (dist < 0.01)
+        continue;
+
+      // Compute target distance
+      double targetDist = arrow->src->size + arrow->dest->size + 150;
+
+      // Add a spring force between these two
+      forceX += 100 * (dist - targetDist) * -dx / dist;
+      forceY += 100 * (dist - targetDist) * -dy / dist;
     }
 
     // Update acceleration of the circle based on its net force
     circle->accelX = forceX / circle->size;
     circle->accelY = forceY / circle->size;
   }
-
-/*
-  // Acceleration due to circle-circle repulsion
-  for (int i = 0; i < numCircles; ++i) {
-    struct circle* circleA = circles[i];
-    for (int j = 0; j < numCircles; ++j) {
-      struct circle* circleB = circles[j];
-
-      if (circleA == circleB)
-        continue;
-
-      circleA->accelX = circleA->currentX - circleB->currentX;
-      circleA->accelY = circleA->currentY - circleB->currentY;
-    }
-  }
-
-  // Acceleration due to circle-edge repulsion
-  for (int i = 0; i < numCircles; ++i) {
-    struct circle* circle = circles[i];
-
-    circle->accelX = circle->currentX - (fbWidth - circle->currentX);
-    circle->accelY = circle->currentY - (fbHeight - circle->currentY);
-  }
-*/
 
   // Integrate new circle positions
   for (int i = 0; i < numCircles; ++i) {
