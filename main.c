@@ -20,13 +20,13 @@
 #include <nanovg_gl.h>
 
 /** The number of loaded circles. */
-static int num_circles;
+static int numCircles;
 
 /** The loaded circles. */
 static struct circle** circles;
 
 /** The number of loaded arrows. */
-static int num_arrows;
+static int numArrows;
 
 /** The loaded arrows. */
 static struct arrow** arrows;
@@ -106,7 +106,7 @@ struct arrow {
  */
 static void updateCirclePhysics() {
   // Iterate over circles
-  for (int i = 0; i < num_circles; ++i) {
+  for (int i = 0; i < numCircles; ++i) {
     struct circle* circle = circles[i];
 
     // The net force on this circle
@@ -127,12 +127,12 @@ static void updateCirclePhysics() {
 
 /*
     // Add gravity among circles
-    for (int j = 0; j < num_circles; ++j) {
-      struct circle* other_circle = circles[j];
+    for (int j = 0; j < numCircles; ++j) {
+      struct circle* otherCircle = circles[j];
 
       // Compute x- and y-axis distances between these two circles
-      float dx = circle->currentX - other_circle->currentX;
-      float dy = circle->currentY - other_circle->currentY;
+      float dx = circle->currentX - otherCircle->currentX;
+      float dy = circle->currentY - otherCircle->currentY;
 
       // Compute absolute distance
       double dist = sqrt(dx * dx + dy * dy);
@@ -143,7 +143,7 @@ static void updateCirclePhysics() {
         continue;
 
       // Compute magnitude of gravitational force
-      float mag = 100 * (circle->size * other_circle->size) / (dist * dist);
+      float mag = 100 * (circle->size * otherCircle->size) / (dist * dist);
 
       // Compute vector components of force
       forceX += mag * -dx;
@@ -152,28 +152,19 @@ static void updateCirclePhysics() {
 */
 
     // Add springs between pairs of circles
-    for (int j = 0; j < num_circles; ++j) {
-      struct circle* other_circle = circles[j];
+    for (int j = 0; j < numCircles; ++j) {
+      struct circle* otherCircle = circles[j];
 
-      float dx = circle->currentX - other_circle->currentX;
-      float dy = circle->currentY - other_circle->currentY;
+      float dx = circle->currentX - otherCircle->currentX;
+      float dy = circle->currentY - otherCircle->currentY;
 
       double dist = sqrt(dx * dx + dy * dy);
 
       if (dist < 0.0001)
         continue;
 
-      float springX = 0;
-      float springY = 0;
-
-      springX = 1000 * (dist - 250);
-      springX *= -dx / dist;
-
-      springY = 1000 * (dist - 250);
-      springY *= -dy / dist;
-
-      forceX += springX;
-      forceY += springY;
+      forceX += 10000 * (dist - 250) * -dx / dist;
+      forceY += 10000 * (dist - 250) * -dy / dist;
     }
 
     // Update acceleration of the circle based on its net force
@@ -183,9 +174,9 @@ static void updateCirclePhysics() {
 
 /*
   // Acceleration due to circle-circle repulsion
-  for (int i = 0; i < num_circles; ++i) {
+  for (int i = 0; i < numCircles; ++i) {
     struct circle* circleA = circles[i];
-    for (int j = 0; j < num_circles; ++j) {
+    for (int j = 0; j < numCircles; ++j) {
       struct circle* circleB = circles[j];
 
       if (circleA == circleB)
@@ -197,7 +188,7 @@ static void updateCirclePhysics() {
   }
 
   // Acceleration due to circle-edge repulsion
-  for (int i = 0; i < num_circles; ++i) {
+  for (int i = 0; i < numCircles; ++i) {
     struct circle* circle = circles[i];
 
     circle->accelX = circle->currentX - (fbWidth - circle->currentX);
@@ -206,7 +197,7 @@ static void updateCirclePhysics() {
 */
 
   // Integrate new circle positions
-  for (int i = 0; i < num_circles; ++i) {
+  for (int i = 0; i < numCircles; ++i) {
     struct circle* circle = circles[i];
 
     // Save a copy of the circle's current position
@@ -257,11 +248,11 @@ static void drawInfoText() {
 
   // Line 2: Number of circles
   char line2[16];
-  snprintf(line2, sizeof line2 - 1, "Circles: %d", 10);
+  snprintf(line2, sizeof line2 - 1, "Circles: %d", numCircles);
 
   // Line 3: Number of arrows
   char line3[16];
-  snprintf(line3, sizeof line3 - 1, "Arrows: %d", 10);
+  snprintf(line3, sizeof line3 - 1, "Arrows: %d", numArrows);
 
   nvgSave(vg);
 
@@ -325,19 +316,91 @@ static void renderFrame() {
   // Begin a new NanoVG frame
   nvgBeginFrame(vg, windowWidth, windowHeight, fbWidth / (float) windowWidth);
 
+  // Draw self-referencing arrows
+  for (int i = 0; i < numArrows; ++i) {
+    struct arrow* arrow = arrows[i];
+
+    // Assert arrow has good source and destination circles
+    if (!arrow->src || !arrow->dest)
+      continue;
+
+    // If arrow is self-referencing
+    if (arrow->src == arrow->dest) {
+      float cx = arrow->src->currentX + arrow->src->size;
+      float cy = arrow->src->currentY;
+      float rad = arrow->src->size;
+
+      // Arrow shaft
+      nvgBeginPath(vg);
+      nvgArc(vg, cx, cy, rad, 0, 2 * M_PI, NVG_CW);
+      nvgStrokeColor(vg, nvgRGBA(255, 0, 0, 255));
+      nvgStroke(vg);
+    } else {
+      // Center to center
+      float cx1 = arrow->src->currentX;
+      float cy1 = arrow->src->currentY;
+      float cx2 = arrow->dest->currentX;
+      float cy2 = arrow->dest->currentY;
+
+      // Distance from center to center
+      double dist = sqrt((cx2 - cx1) * (cx2 - cx1) + (cy2 - cy1) * (cy2 - cy1));
+
+      // Nearest edge to nearest edge
+      float x1 = ((cx2 - cx1) / dist) * arrow->src->size + arrow->src->currentX;
+      float y1 = ((cy2 - cy1) / dist) * arrow->src->size + arrow->src->currentY;
+      float x2 = ((cx1 - cx2) / dist) * arrow->dest->size + arrow->dest->currentX;
+      float y2 = ((cy1 - cy2) / dist) * arrow->dest->size + arrow->dest->currentY;
+
+      // Intermediate arrowhead vector
+      // This is from the perspective of (x2, y2) and points toward (x1, y1) with arrowhead length
+      float hvx = ((cx1 - cx2) / dist) * 10;
+      float hvy = ((cy1 - cy2) / dist) * 10;
+
+      // Perpendicular vector to (hvx, hvy), but with half this length
+      // We'll use this to displace the arrowhead from the line a bit by a certain angle
+      float hvxp = -hvy / 2;
+      float hvyp = hvx / 2;
+
+      // Final arrowhead points coordinates
+      // Two points: one (usually) above and one (usually) below the arrow shaft
+      // If the shaft is vertical, take your pick (I don't know which will be which)
+      float h1x2 = hvx + hvxp + x2;
+      float h1y2 = hvy + hvyp + y2;
+      float h2x2 = hvx - hvxp + x2;
+      float h2y2 = hvy - hvyp + y2;
+
+      // Arrow shaft
+      nvgBeginPath(vg);
+      nvgMoveTo(vg, x1, y1);
+      nvgLineTo(vg, x2, y2);
+      nvgStrokeColor(vg, nvgRGBA(255, 0, 0, 255));
+      nvgStroke(vg);
+
+      // Arrowhead part 1
+      nvgBeginPath(vg);
+      nvgMoveTo(vg, x2, y2);
+      nvgLineTo(vg, h1x2, h1y2);
+      nvgStrokeColor(vg, nvgRGBA(255, 0, 0, 255));
+      nvgStroke(vg);
+
+      // Arrowhead part 2
+      nvgBeginPath(vg);
+      nvgMoveTo(vg, x2, y2);
+      nvgLineTo(vg, h2x2, h2y2);
+      nvgStrokeColor(vg, nvgRGBA(255, 0, 0, 255));
+      nvgStroke(vg);
+    }
+  }
+
   // Draw circles
-  for (int i = 0; i < num_circles; ++i) {
+  for (int i = 0; i < numCircles; ++i) {
     struct circle* circle = circles[i];
 
+    // Circle fill
     nvgBeginPath(vg);
     nvgCircle(vg, circle->currentX, circle->currentY, circle->size);
     nvgFillColor(vg, nvgRGBA(0, 0, 0, 255));
     nvgFill(vg);
-  }
-
-  // Draw arrows
-  for (int i = 0; i < num_arrows; ++i) {
-    // TODO
   }
 
   // Draw the FPS counter
@@ -351,12 +414,12 @@ static void renderFrame() {
 }
 
 int main() {
-  num_circles = 3;
+  numCircles = 3;
   circles = calloc(3, sizeof(struct circle*));
   circles[0] = calloc(1, sizeof(struct circle));
   circles[0]->size = 40;
-  circles[0]->currentX = circles[0]->lastX = 12;
-  circles[0]->currentY = circles[0]->lastY = 12;
+  circles[0]->currentX = circles[0]->lastX = 500;
+  circles[0]->currentY = circles[0]->lastY = 300;
   circles[1] = calloc(1, sizeof(struct circle));
   circles[1]->size = 40;
   circles[1]->currentX = circles[1]->lastX = 200;
@@ -366,11 +429,14 @@ int main() {
   circles[2]->currentX = circles[2]->lastX = 240;
   circles[2]->currentY = circles[2]->lastY = 300;
 
-  num_arrows = 1;
+  numArrows = 2;
   arrows = calloc(3, sizeof(struct arrow*));
   arrows[0] = calloc(1, sizeof(struct arrow));
   arrows[0]->src = circles[0];
-  arrows[0]->dest = circles[0];
+  arrows[0]->dest = circles[1];
+  arrows[1] = calloc(1, sizeof(struct arrow));
+  arrows[1]->src = circles[0];
+  arrows[1]->dest = circles[0];
 
   // Try to initialize the GLFW library
   if (!glfwInit()) {
