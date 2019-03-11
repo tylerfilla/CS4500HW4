@@ -8,6 +8,8 @@
  * - The program is written in C99 with the glad, GLFW, and NanoVG libraries and the platform OpenGL implementation thing.
  * - I have no qualms with global variables (mutable, even) in a simple single-threaded program.
  * - I did not try to draw arrowheads on self-referencing arcs.
+ * - It has limited support for drawing multiple duplicate arrows. (they will shift and overlap)
+ * - Accepts between 2 and 20 circles and between 0 and 1000000 arrows.
  */
 
 #include <math.h>
@@ -25,12 +27,6 @@ static int numCircles;
 
 /** The loaded circles. */
 static struct circle** circles;
-
-/** The number of loaded arrows. */
-static int numArrows;
-
-/** The loaded arrows. */
-static struct arrow** arrows;
 
 /** Initial width of the window. */
 static const int WINDOW_INIT_WIDTH = 1024;
@@ -65,10 +61,33 @@ static double perfWindow[PERF_WINDOW_SIZE];
 /** The index of the current frame in the perf window. */
 static int perfWindowCurrent;
 
+/** The name of the loaded file. */
+static char fileName[256];
+
+/**
+ * One or more arrows.
+ */
+struct arrow {
+  /** The arrow count. */
+  int count;
+
+  /** The arrow destination. */
+  struct circle* dest;
+};
+
 /**
  * A single circle.
  */
 struct circle {
+  /** The outgoing arrows. */
+  struct arrow** arrows;
+
+  /** The number of unique outgoing arrows. */
+  int numUniqueArrows;
+
+  /** The total number of outgoing arrows. */
+  int numArrows;
+
   /** The circle size. Doubles as radius and mass. */
   float size;
 
@@ -89,17 +108,6 @@ struct circle {
 
   /** The y-axis acceleration of the circle. */
   float accelY;
-};
-
-/**
- * A single arrow.
- */
-struct arrow {
-  /** The source circle. */
-  struct circle* src;
-
-  /** The destination circle. */
-  struct circle* dest;
 };
 
 /**
@@ -151,15 +159,10 @@ static void updateCirclePhysics() {
     }
 
     // Go over all arrows from this circle
-    for (int j = 0; j < numArrows; ++j) {
-      struct arrow* arrow = arrows[j];
-
-      if (arrow->src != circle)
-        continue;
-
+    for (int j = 0; j < circle->numUniqueArrows; ++j) {
       // Get displacement of circles
-      float dx = arrow->src->currentX - arrow->dest->currentX;
-      float dy = arrow->src->currentY - arrow->dest->currentY;
+      float dx = circle->currentX - circle->arrows[j]->dest->currentX;
+      float dy = circle->currentY - circle->arrows[j]->dest->currentY;
 
       // Compute Euclidian distance between circles
       double dist = sqrt(dx * dx + dy * dy);
@@ -169,11 +172,12 @@ static void updateCirclePhysics() {
         continue;
 
       // Compute target distance
-      double targetDist = arrow->src->size + arrow->dest->size + 150;
+      // This is all very roughly computed
+      double targetDist = circle->size + circle->arrows[j]->dest->size + 150;
 
       // Add a spring force between these two
-      forceX += 100 * (dist - targetDist) * -dx / dist;
-      forceY += 100 * (dist - targetDist) * -dy / dist;
+      forceX += 100 * (dist - fmax(0, targetDist)) * -dx / dist;
+      forceY += 100 * (dist - fmax(0, targetDist)) * -dy / dist;
     }
 
     // Update acceleration of the circle based on its net force
@@ -229,11 +233,17 @@ static void drawFps() {
 static void drawInfoText() {
   // Line 1: File name
   char line1[128];
-  snprintf(line1, sizeof line1 - 1, "File: %s", "/home/person/file.txt");
+  snprintf(line1, sizeof line1 - 1, "File: %s", fileName);
 
   // Line 2: Number of circles
   char line2[16];
   snprintf(line2, sizeof line2 - 1, "Circles: %d", numCircles);
+
+  // Count total number of arrows on screen
+  int numArrows = 0;
+  for (int i = 0; i < numCircles; ++i) {
+    numArrows += circles[i]->numArrows;
+  }
 
   // Line 3: Number of arrows
   char line3[16];
@@ -301,85 +311,97 @@ static void renderFrame() {
   // Begin a new NanoVG frame
   nvgBeginFrame(vg, windowWidth, windowHeight, fbWidth / (float) windowWidth);
 
-  // Draw self-referencing arrows
-  for (int i = 0; i < numArrows; ++i) {
-    struct arrow* arrow = arrows[i];
-
-    // Assert arrow has good source and destination circles
-    if (!arrow->src || !arrow->dest)
-      continue;
-
-    // If arrow is self-referencing
-    if (arrow->src == arrow->dest) {
-      float cx = arrow->src->currentX + arrow->src->size;
-      float cy = arrow->src->currentY;
-      float rad = arrow->src->size;
-
-      // Arrow shaft
-      nvgBeginPath(vg);
-      nvgArc(vg, cx, cy, rad, 0, 2 * M_PI, NVG_CW);
-      nvgStrokeColor(vg, nvgRGBA(255, 0, 0, 255));
-      nvgStroke(vg);
-    } else {
-      // Center to center
-      float cx1 = arrow->src->currentX;
-      float cy1 = arrow->src->currentY;
-      float cx2 = arrow->dest->currentX;
-      float cy2 = arrow->dest->currentY;
-
-      // Distance from center to center
-      double dist = sqrt((cx2 - cx1) * (cx2 - cx1) + (cy2 - cy1) * (cy2 - cy1));
-
-      // Nearest edge to nearest edge
-      float x1 = ((cx2 - cx1) / dist) * arrow->src->size + arrow->src->currentX;
-      float y1 = ((cy2 - cy1) / dist) * arrow->src->size + arrow->src->currentY;
-      float x2 = ((cx1 - cx2) / dist) * arrow->dest->size + arrow->dest->currentX;
-      float y2 = ((cy1 - cy2) / dist) * arrow->dest->size + arrow->dest->currentY;
-
-      // Intermediate arrowhead vector
-      // This is from the perspective of (x2, y2) and points toward (x1, y1) with arrowhead length
-      float hvx = ((cx1 - cx2) / dist) * 10;
-      float hvy = ((cy1 - cy2) / dist) * 10;
-
-      // Perpendicular vector to (hvx, hvy), but with half this length
-      // We'll use this to displace the arrowhead from the line a bit by a certain angle
-      float hvxp = -hvy / 2;
-      float hvyp = hvx / 2;
-
-      // Final arrowhead points coordinates
-      // Two points: one (usually) above and one (usually) below the arrow shaft
-      // If the shaft is vertical, take your pick (I don't know which will be which)
-      float h1x2 = hvx + hvxp + x2;
-      float h1y2 = hvy + hvyp + y2;
-      float h2x2 = hvx - hvxp + x2;
-      float h2y2 = hvy - hvyp + y2;
-
-      // Arrow shaft
-      nvgBeginPath(vg);
-      nvgMoveTo(vg, x1, y1);
-      nvgLineTo(vg, x2, y2);
-      nvgStrokeColor(vg, nvgRGBA(255, 0, 0, 255));
-      nvgStroke(vg);
-
-      // Arrowhead part 1
-      nvgBeginPath(vg);
-      nvgMoveTo(vg, x2, y2);
-      nvgLineTo(vg, h1x2, h1y2);
-      nvgStrokeColor(vg, nvgRGBA(255, 0, 0, 255));
-      nvgStroke(vg);
-
-      // Arrowhead part 2
-      nvgBeginPath(vg);
-      nvgMoveTo(vg, x2, y2);
-      nvgLineTo(vg, h2x2, h2y2);
-      nvgStrokeColor(vg, nvgRGBA(255, 0, 0, 255));
-      nvgStroke(vg);
-    }
-  }
-
   // Draw circles
   for (int i = 0; i < numCircles; ++i) {
     struct circle* circle = circles[i];
+    // Draw arrows leading away from this circle
+    for (int i = 0; i < circle->numUniqueArrows; ++i) {
+      struct arrow* arrow = circle->arrows[i];
+
+      // Iterate through all arrows this arrow struct represents
+      for (int j = 0; j < arrow->count; ++j) {
+        // If arrow is self-referencing
+        if (circle == arrow->dest) {
+          float cx = circle->currentX + circle->size + 10 * j;
+          float cy = circle->currentY;
+          float rad = circle->size + 10 * j;
+
+          // Arrow shaft
+          nvgBeginPath(vg);
+          nvgArc(vg, cx, cy, rad, 0, 2 * M_PI, NVG_CW);
+          nvgStrokeColor(vg, nvgRGBA(255, 0, 0, 255));
+          nvgStroke(vg);
+        } else {
+          // Center to center
+          float cx1 = circle->currentX;
+          float cy1 = circle->currentY;
+          float cx2 = arrow->dest->currentX;
+          float cy2 = arrow->dest->currentY;
+
+          // Distance from center to center
+          double dist = sqrt((cx2 - cx1) * (cx2 - cx1) + (cy2 - cy1) * (cy2 - cy1));
+
+          // A vector from the center of circle 1 (source) to that of circle 2 (dest)
+          float cvx = cx1 - cx2;
+          float cvy = cy1 - cy2;
+
+          // A unit vector perpendicular to that above
+          float cvxpu = -cvy / dist;
+          float cvypu = cvx / dist;
+
+          // Shift the center to accommodate multiple arrows
+//        cx1 += cvxpu * 15 * (j - circle->numArrows / 2);
+//        cy1 += cvypu * 15 * (j - circle->numArrows / 2);
+//        cx2 += cvxpu * 15 * (j - circle->numArrows / 2);
+//        cy2 += cvypu * 15 * (j - circle->numArrows / 2);
+
+          // Nearest edge to nearest edge
+          float x1 = ((cx2 - cx1) / dist) * circle->size + cx1;
+          float y1 = ((cy2 - cy1) / dist) * circle->size + cy1;
+          float x2 = ((cx1 - cx2) / dist) * arrow->dest->size + cx2;
+          float y2 = ((cy1 - cy2) / dist) * arrow->dest->size + cy2;
+
+          // Intermediate arrowhead vector
+          // This is from the perspective of (x2, y2) and points toward (x1, y1) with arrowhead length
+          float hvx = ((cx1 - cx2) / dist) * 10;
+          float hvy = ((cy1 - cy2) / dist) * 10;
+
+          // Perpendicular vector to (hvx, hvy), but with half this length
+          // We'll use this to displace the arrowhead from the line a bit by a certain angle
+          float hvxp = -hvy / 2;
+          float hvyp = hvx / 2;
+
+          // Final arrowhead points coordinates
+          // Two points: one (usually) above and one (usually) below the arrow shaft
+          // If the shaft is vertical, take your pick (I don't know which will be which)
+          float h1x2 = hvx + hvxp + x2;
+          float h1y2 = hvy + hvyp + y2;
+          float h2x2 = hvx - hvxp + x2;
+          float h2y2 = hvy - hvyp + y2;
+
+          // Arrow shaft
+          nvgBeginPath(vg);
+          nvgMoveTo(vg, x1, y1);
+          nvgLineTo(vg, x2, y2);
+          nvgStrokeColor(vg, nvgRGBA(255, 0, 0, 255));
+          nvgStroke(vg);
+
+          // Arrowhead part 1
+          nvgBeginPath(vg);
+          nvgMoveTo(vg, x2, y2);
+          nvgLineTo(vg, h1x2, h1y2);
+          nvgStrokeColor(vg, nvgRGBA(255, 0, 0, 255));
+          nvgStroke(vg);
+
+          // Arrowhead part 2
+          nvgBeginPath(vg);
+          nvgMoveTo(vg, x2, y2);
+          nvgLineTo(vg, h2x2, h2y2);
+          nvgStrokeColor(vg, nvgRGBA(255, 0, 0, 255));
+          nvgStroke(vg);
+        }
+      }
+    }
 
     // Circle fill
     nvgBeginPath(vg);
@@ -398,30 +420,137 @@ static void renderFrame() {
   nvgEndFrame(vg);
 }
 
-int main() {
-  numCircles = 3;
-  circles = calloc(3, sizeof(struct circle*));
-  circles[0] = calloc(1, sizeof(struct circle));
-  circles[0]->size = 40;
-  circles[0]->currentX = circles[0]->lastX = 500;
-  circles[0]->currentY = circles[0]->lastY = 300;
-  circles[1] = calloc(1, sizeof(struct circle));
-  circles[1]->size = 40;
-  circles[1]->currentX = circles[1]->lastX = 200;
-  circles[1]->currentY = circles[1]->lastY = 50;
-  circles[2] = calloc(1, sizeof(struct circle));
-  circles[2]->size = 40;
-  circles[2]->currentX = circles[2]->lastX = 240;
-  circles[2]->currentY = circles[2]->lastY = 300;
+/**
+ * Load from the given input file.
+ *
+ * @param file The input file
+ * @return Zero on success, otherwise nonzero
+ */
+static int loadFromFile(FILE* file) {
+  if (!file)
+    return 1;
 
-  numArrows = 2;
-  arrows = calloc(3, sizeof(struct arrow*));
-  arrows[0] = calloc(1, sizeof(struct arrow));
-  arrows[0]->src = circles[0];
-  arrows[0]->dest = circles[1];
-  arrows[1] = calloc(1, sizeof(struct arrow));
-  arrows[1]->src = circles[0];
-  arrows[1]->dest = circles[0];
+  // Read circle count
+  fscanf(file, "%d", &numCircles);
+
+  // Validate circle count
+  if (numCircles < 2 || numCircles > 20) {
+    fprintf(stderr, "error: circle count out of range: %d\n", numCircles);
+    numCircles = 0;
+    return 1;
+  }
+
+  // Allocate circles
+  circles = calloc(numCircles, sizeof(struct circle*));
+  for (int i = 0; i < numCircles; ++i) {
+    circles[i] = calloc(1, sizeof(struct circle));
+    circles[i]->currentX = circles[i]->lastX = rand() % WINDOW_INIT_WIDTH;
+    circles[i]->currentY = circles[i]->lastY = rand() % WINDOW_INIT_HEIGHT;
+    circles[i]->size = 20;
+  }
+
+  // Read arrow count
+  int numArrows;
+  fscanf(file, "%d", &numArrows);
+
+  // Validate arrow count
+  if (numArrows < 0 || numArrows > 1000000) {
+    fprintf(stderr, "error: arrow count out of range: %d\n", numArrows);
+    return 1;
+  }
+
+  // Read in arrows one-by-one
+  for (int i = 0; i < numArrows; ++i) {
+    // Read one arrow line
+    int arrowSrc;
+    int arrowDest;
+    fscanf(file, "%d %d", &arrowSrc, &arrowDest);
+
+    // Validate source circle
+    if (arrowSrc < 0 || arrowSrc > 20) {
+      fprintf(stderr, "error: arrow %d source out of range: %d\n", i, arrowSrc);
+      return 1;
+    }
+
+    // Validate destination circle
+    if (arrowDest < 0 || arrowDest > 20) {
+      fprintf(stderr, "error: arrow %d destination out of range: %d\n", i, arrowDest);
+      return 1;
+    }
+
+    // The source circle
+    struct circle* src = circles[arrowSrc];
+
+    // Go over arrows already on the source circle
+    // We will coalesce duplicate arrows here
+    int coalesced = 0;
+    for (int j = 0; j < src->numUniqueArrows; ++j) {
+      if (src->arrows[j]->dest == circles[arrowDest]) {
+        // Coalesce it by incrementing the counts only
+        src->arrows[j]->count++;
+        src->numArrows++;
+        coalesced = 1;
+        break;
+      }
+    }
+
+    // If arrow was not coalesced
+    // We need to add a new arrow here
+    if (!coalesced) {
+      int newIndex = src->numUniqueArrows;
+
+      // Tack on another arrow pointer for a new arrow
+      src->arrows = realloc(src->arrows, ++src->numUniqueArrows * sizeof(struct arrow*));
+      src->arrows[newIndex] = calloc(1, sizeof(struct arrow));
+      src->arrows[newIndex]->count = 1;
+      src->arrows[newIndex]->dest = circles[arrowDest];
+      src->numArrows++;
+    }
+  }
+
+  return 0;
+}
+
+/**
+ * Prompt the user for an input file and load it.
+ */
+static void promptAndLoadFile() {
+  printf("Circles and Arrows IV\n");
+  printf("By Tyler Filla\n");
+
+  do {
+    // Prompt for a file name
+    printf("Input: ");
+    fgets(fileName, 256, stdin);
+    for (int i = 0; i < sizeof fileName; ++i) {
+      if (fileName[i] == '\n') {
+        fileName[i] = '\0';
+      }
+    }
+
+    // Try to open the file for read
+    FILE* file = fopen(fileName, "r");
+    if (!file) {
+      perror("error: could not open file: ");
+      continue;
+    }
+
+    // Try to load state from file
+    if (!loadFromFile(file)) {
+      printf("Successfully loaded file!\n");
+      fclose(file);
+      break;
+    } else {
+      fprintf(stderr, "error: could not load from file\n");
+      fclose(file);
+      continue;
+    }
+  } while (1);
+}
+
+int main() {
+  // Prompt and load from user-specified file
+  promptAndLoadFile();
 
   // Try to initialize the GLFW library
   if (!glfwInit()) {
