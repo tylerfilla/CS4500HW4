@@ -9,6 +9,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+#include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
 #define WINDOW_WIDTH 1024
@@ -22,12 +23,23 @@ int main() {
     return 1;
   }
 
+  // Request OpenGL 3.2 core profile
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
+  glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
   // Create the window
   GLFWwindow* window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE, NULL, NULL);
 
   // Use this window for displaying OpenGL graphics on this thread
   // We're not going to be bouncing back and forth among threads, so set and forget
   glfwMakeContextCurrent(window);
+
+  // Load OpenGL functions
+  if (!gladLoadGL()) {
+    fprintf(stderr, "error: failed to load gl\n");
+    return 1;
+  }
 
   // Window loop
   while (true) {
@@ -38,7 +50,9 @@ int main() {
     // Handle window events
     glfwPollEvents();
 
-    // TODO: Draw the picture
+    // Clear the screen
+    glClearColor(1, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
 
     // Move current graphics to the window
     glfwSwapBuffers(window);
