@@ -113,11 +113,11 @@ static void updateCirclePhysics() {
     float forceX = 0;
     float forceY = 0;
 
-/*
     // Subtract force due to friction (this is pretty hacky)
-    forceX -= 10 * circle->size * (circle->currentX - circle->lastX);
-    forceY -= 10 * circle->size * (circle->currentY - circle->lastY);
+    forceX -= 50 * circle->size * (circle->currentX - circle->lastX);
+    forceY -= 50 * circle->size * (circle->currentY - circle->lastY);
 
+/*
     // Add force due to central attraction
     forceX += 100 * fmax(0, fbWidth / 2 - circle->currentX);
     forceX += 100 * fmin(0, fbWidth / 2 - circle->currentX);
@@ -125,6 +125,7 @@ static void updateCirclePhysics() {
     forceY += 100 * fmin(0, fbHeight / 2 - circle->currentY);
 */
 
+/*
     // Add gravity among circles
     for (int j = 0; j < num_circles; ++j) {
       struct circle* other_circle = circles[j];
@@ -147,6 +148,32 @@ static void updateCirclePhysics() {
       // Compute vector components of force
       forceX += mag * -dx;
       forceY += mag * -dy;
+    }
+*/
+
+    // Add springs between pairs of circles
+    for (int j = 0; j < num_circles; ++j) {
+      struct circle* other_circle = circles[j];
+
+      float dx = circle->currentX - other_circle->currentX;
+      float dy = circle->currentY - other_circle->currentY;
+
+      double dist = sqrt(dx * dx + dy * dy);
+
+      if (dist < 0.0001)
+        continue;
+
+      float springX = 0;
+      float springY = 0;
+
+      springX = 1000 * (dist - 250);
+      springX *= -dx / dist;
+
+      springY = 1000 * (dist - 250);
+      springY *= -dy / dist;
+
+      forceX += springX;
+      forceY += springY;
     }
 
     // Update acceleration of the circle based on its net force
