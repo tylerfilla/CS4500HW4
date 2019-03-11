@@ -9,6 +9,7 @@
  * - I have no qualms with global variables (mutable, even) in a simple single-threaded program.
  */
 
+#include <math.h>
 #include <stdio.h>
 
 #include <glad/glad.h>
@@ -17,6 +18,18 @@
 #define NANOVG_GL3_IMPLEMENTATION
 #include <nanovg.h>
 #include <nanovg_gl.h>
+
+/** The number of loaded circles. */
+static int num_circles;
+
+/** The loaded circles. */
+static struct circle** circles;
+
+/** The number of loaded arrows. */
+static int num_arrows;
+
+/** The loaded arrows. */
+static struct arrow** arrows;
 
 /** Initial width of the window. */
 static const int WINDOW_INIT_WIDTH = 1024;
@@ -40,31 +53,168 @@ static int fbWidth;
 static int fbHeight;
 
 /** The latest computed frames per second. */
-static double perf_fps;
+static double perfFps;
 
 /** The size of the sliding window for performance measurement. */
 #define PERF_WINDOW_SIZE 16
 
 /** The perf window. This holds past frame times. */
-static double perf_window[PERF_WINDOW_SIZE];
+static double perfWindow[PERF_WINDOW_SIZE];
 
 /** The index of the current frame in the perf window. */
-static int perf_window_current;
+static int perfWindowCurrent;
+
+/**
+ * A single circle.
+ */
+struct circle {
+  /** The circle size. Doubles as radius and mass. */
+  float size;
+
+  /** The current x-coordinate of the circle. */
+  float currentX;
+
+  /** The current y-coordinate of the circle. */
+  float currentY;
+
+  /** The last x-coordinate of the circle. */
+  float lastX;
+
+  /** The last y-coordinate of the circle. */
+  float lastY;
+
+  /** The x-axis acceleration of the circle. */
+  float accelX;
+
+  /** The y-axis acceleration of the circle. */
+  float accelY;
+};
+
+/**
+ * A single arrow.
+ */
+struct arrow {
+  /** The source circle. */
+  struct circle* src;
+
+  /** The destination circle. */
+  struct circle* dest;
+};
+
+/**
+ * Update physics of the circles.
+ */
+static void updateCirclePhysics() {
+  // Iterate over circles
+  for (int i = 0; i < num_circles; ++i) {
+    struct circle* circle = circles[i];
+
+    // The net force on this circle
+    float forceX = 0;
+    float forceY = 0;
+
+/*
+    // Subtract force due to friction (this is pretty hacky)
+    forceX -= 10 * circle->size * (circle->currentX - circle->lastX);
+    forceY -= 10 * circle->size * (circle->currentY - circle->lastY);
+
+    // Add force due to central attraction
+    forceX += 100 * fmax(0, fbWidth / 2 - circle->currentX);
+    forceX += 100 * fmin(0, fbWidth / 2 - circle->currentX);
+    forceY += 100 * fmax(0, fbHeight / 2 - circle->currentY);
+    forceY += 100 * fmin(0, fbHeight / 2 - circle->currentY);
+*/
+
+    // Add gravity among circles
+    for (int j = 0; j < num_circles; ++j) {
+      struct circle* other_circle = circles[j];
+
+      // Compute x- and y-axis distances between these two circles
+      float dx = circle->currentX - other_circle->currentX;
+      float dy = circle->currentY - other_circle->currentY;
+
+      // Compute absolute distance
+      double dist = sqrt(dx * dx + dy * dy);
+
+      // Ignore "close enough" circles
+      // This is a hack that avoids some divisions by zero
+      if (dist < 0.0001)
+        continue;
+
+      // Compute magnitude of gravitational force
+      float mag = 100 * (circle->size * other_circle->size) / (dist * dist);
+
+      // Compute vector components of force
+      forceX += mag * -dx;
+      forceY += mag * -dy;
+    }
+
+    // Update acceleration of the circle based on its net force
+    circle->accelX = forceX / circle->size;
+    circle->accelY = forceY / circle->size;
+  }
+
+/*
+  // Acceleration due to circle-circle repulsion
+  for (int i = 0; i < num_circles; ++i) {
+    struct circle* circleA = circles[i];
+    for (int j = 0; j < num_circles; ++j) {
+      struct circle* circleB = circles[j];
+
+      if (circleA == circleB)
+        continue;
+
+      circleA->accelX = circleA->currentX - circleB->currentX;
+      circleA->accelY = circleA->currentY - circleB->currentY;
+    }
+  }
+
+  // Acceleration due to circle-edge repulsion
+  for (int i = 0; i < num_circles; ++i) {
+    struct circle* circle = circles[i];
+
+    circle->accelX = circle->currentX - (fbWidth - circle->currentX);
+    circle->accelY = circle->currentY - (fbHeight - circle->currentY);
+  }
+*/
+
+  // Integrate new circle positions
+  for (int i = 0; i < num_circles; ++i) {
+    struct circle* circle = circles[i];
+
+    // Save a copy of the circle's current position
+    float tempX = circle->currentX;
+    float tempY = circle->currentY;
+
+    // Verlet integration-style position update
+    // We don't need to track circle velocities (we compute velocities on the fly, essentially)
+    float delta = 1 / 60.0f;
+    circle->currentX += (circle->currentX - circle->lastX) + circle->accelX * delta * delta;
+    circle->currentY += (circle->currentY - circle->lastY) + circle->accelY * delta * delta;
+
+    // Keep old positions for future integrations
+    circle->lastX = tempX;
+    circle->lastY = tempY;
+  }
+}
 
 /**
  * Draw the FPS count.
  */
-static void drawFPS() {
+static void drawFps() {
+  // Create FPS count text
   char text[16];
-  snprintf(text, sizeof text - 1, "FPS: %.0f", perf_fps);
+  snprintf(text, sizeof text - 1, "FPS: %.0f", perfFps);
 
   nvgSave(vg);
 
+  // Set text properties
   nvgFontFace(vg, "sans");
   nvgFontSize(vg, 22);
   nvgFillColor(vg, nvgRGBA(120, 120, 120, 255));
   nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
 
+  // Draw text
   nvgText(vg, 8, 8, text, NULL);
 
   nvgRestore(vg);
@@ -88,11 +238,13 @@ static void drawInfoText() {
 
   nvgSave(vg);
 
+  // Set text properties
   nvgFontFace(vg, "sans");
   nvgFontSize(vg, 22);
   nvgFillColor(vg, nvgRGBA(120, 120, 120, 255));
   nvgTextAlign(vg, NVG_ALIGN_RIGHT | NVG_ALIGN_TOP);
 
+  // Draw lines of text
   nvgText(vg, fbWidth - 8, 8, line1, NULL);
   nvgText(vg, fbWidth - 8, 8 + 22 + 2, line2, NULL);
   nvgText(vg, fbWidth - 8, 8 + 22 + 2 + 22 + 2, line3, NULL);
@@ -115,7 +267,7 @@ static void renderInit() {
     exit(1);
   }
 
-  // Set the sans-serif font in NanoVG
+  // Set my desired sans-serif font
   nvgCreateFont(vg, "sans", "Roboto-Regular.ttf");
 }
 
@@ -132,6 +284,7 @@ static void renderFrame() {
   // Query the framebuffer dimensions, as well
   // The framebuffer is part of the OpenGL context on this thread
   // It might actually have a different pixel count from the window due to DPI scaling
+  // The fbWidth and fbHeight variables are global so we can render with them
   glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
 
   // Update the OpenGL viewport dimensions
@@ -145,8 +298,23 @@ static void renderFrame() {
   // Begin a new NanoVG frame
   nvgBeginFrame(vg, windowWidth, windowHeight, fbWidth / (float) windowWidth);
 
+  // Draw circles
+  for (int i = 0; i < num_circles; ++i) {
+    struct circle* circle = circles[i];
+
+    nvgBeginPath(vg);
+    nvgCircle(vg, circle->currentX, circle->currentY, circle->size);
+    nvgFillColor(vg, nvgRGBA(0, 0, 0, 255));
+    nvgFill(vg);
+  }
+
+  // Draw arrows
+  for (int i = 0; i < num_arrows; ++i) {
+    // TODO
+  }
+
   // Draw the FPS counter
-  drawFPS();
+  drawFps();
 
   // Draw loaded data info text
   drawInfoText();
@@ -156,6 +324,27 @@ static void renderFrame() {
 }
 
 int main() {
+  num_circles = 3;
+  circles = calloc(3, sizeof(struct circle*));
+  circles[0] = calloc(1, sizeof(struct circle));
+  circles[0]->size = 40;
+  circles[0]->currentX = circles[0]->lastX = 12;
+  circles[0]->currentY = circles[0]->lastY = 12;
+  circles[1] = calloc(1, sizeof(struct circle));
+  circles[1]->size = 40;
+  circles[1]->currentX = circles[1]->lastX = 200;
+  circles[1]->currentY = circles[1]->lastY = 50;
+  circles[2] = calloc(1, sizeof(struct circle));
+  circles[2]->size = 40;
+  circles[2]->currentX = circles[2]->lastX = 240;
+  circles[2]->currentY = circles[2]->lastY = 300;
+
+  num_arrows = 1;
+  arrows = calloc(3, sizeof(struct arrow*));
+  arrows[0] = calloc(1, sizeof(struct arrow));
+  arrows[0]->src = circles[0];
+  arrows[0]->dest = circles[0];
+
   // Try to initialize the GLFW library
   if (!glfwInit()) {
     fprintf(stderr, "error: failed to init GLFW\n");
@@ -203,6 +392,9 @@ int main() {
       break;
     }
 
+    // Update all the circles
+    updateCirclePhysics();
+
     // Record time before rendering
     double timeBeforeFrame = glfwGetTime();
 
@@ -213,14 +405,14 @@ int main() {
     glfwSwapBuffers(window);
 
     // Record frame time into perf window
-    perf_window[perf_window_current] = glfwGetTime() - timeBeforeFrame;
-    perf_window_current = ++perf_window_current % PERF_WINDOW_SIZE;
+    perfWindow[perfWindowCurrent] = glfwGetTime() - timeBeforeFrame;
+    perfWindowCurrent = ++perfWindowCurrent % PERF_WINDOW_SIZE;
 
     // Compute frames per second
-    perf_fps = 0;
+    perfFps = 0;
     for (int i = 0; i < PERF_WINDOW_SIZE; ++i) {
-      perf_fps += perf_window[i];
+      perfFps += perfWindow[i];
     }
-    perf_fps = PERF_WINDOW_SIZE / perf_fps;
+    perfFps = PERF_WINDOW_SIZE / perfFps;
   }
 }
