@@ -12,6 +12,10 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
+#define NANOVG_GL3_IMPLEMENTATION
+#include <nanovg.h>
+#include <nanovg_gl.h>
+
 #define WINDOW_WIDTH 1024
 #define WINDOW_HEIGHT 576
 #define WINDOW_TITLE "Circles and Arrows IV: A New Hope"
@@ -31,6 +35,11 @@ int main() {
   // Create the window
   GLFWwindow* window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE, NULL, NULL);
 
+  if (!window) {
+    fprintf(stderr, "error: failed to create window\n");
+    return 1;
+  }
+
   // Use this window for displaying OpenGL graphics on this thread
   // We're not going to be bouncing back and forth among threads, so set and forget
   glfwMakeContextCurrent(window);
@@ -41,6 +50,9 @@ int main() {
     return 1;
   }
 
+  // Create NanoVG context
+  NVGcontext* ctx = nvgCreateGL3(NVG_ANTIALIAS | NVG_STENCIL_STROKES);
+
   // Window loop
   while (true) {
     // Close window if requested
@@ -50,14 +62,33 @@ int main() {
     // Handle window events
     glfwPollEvents();
 
-    // Clear the screen
-    glClearColor(1, 0, 0, 1);
+    // Clear the screen to black
+    glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT);
+
+    // Get window/framebuffer metrix FIXME
+    int winWidth;
+    int winHeight;
+    int fbWidth;
+    int fbHeight;
+    glfwGetWindowSize(window, &winWidth, &winHeight);
+    glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
+    float ratio = fbWidth / (float) winWidth;
+    printf("%f\n", ratio);
+
+    // FIXME: Do actual drawing
+    nvgBeginFrame(ctx, fbWidth, fbHeight, ratio);
+    nvgBeginPath(ctx);
+    nvgRoundedRect(ctx, 0, 0, 20, 20, 5);
+    nvgFillColor(ctx, nvgRGBA(255, 255, 255, 255));
+    nvgFill(ctx);
+    nvgEndFrame(ctx);
 
     // Move current graphics to the window
     glfwSwapBuffers(window);
   }
 
+  nvgDeleteGL3(ctx);
   glfwTerminate();
   return 0;
 }
