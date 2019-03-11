@@ -8,12 +8,14 @@
  * - The program is written in C99 with the glad, GLFW, and NanoVG libraries and the platform OpenGL implementation thing.
  * - I have no qualms with global variables (mutable, even) in a simple single-threaded program.
  * - I did not try to draw arrowheads on self-referencing arcs.
- * - It has limited support for drawing multiple duplicate arrows. (they will shift and overlap)
+ * - It has limited support for drawing multiple duplicate arrows. (only self-referencing)
  * - Accepts between 2 and 20 circles and between 0 and 1000000 arrows.
+ * - Consequently, this turned into a vector math refresher :)
  */
 
 #include <math.h>
 #include <stdio.h>
+#include <time.h>
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -125,8 +127,8 @@ static void updateCirclePhysics() {
     // Subtract force due to friction (this is pretty hacky)
     // It uses *roughly* the current velocity and an arbitrary factor
     // Needless to say, it could be better!
-    forceX -= 50 * circle->size * (circle->currentX - circle->lastX);
-    forceY -= 50 * circle->size * (circle->currentY - circle->lastY);
+    forceX -= 30 * circle->size * (circle->currentX - circle->lastX);
+    forceY -= 30 * circle->size * (circle->currentY - circle->lastY);
 
     // Factor in circle-side repulsion
     forceX += 10000 * circle->size / fmax(1, circle->currentX);
@@ -408,6 +410,17 @@ static void renderFrame() {
     nvgCircle(vg, circle->currentX, circle->currentY, circle->size);
     nvgFillColor(vg, nvgRGBA(0, 0, 0, 255));
     nvgFill(vg);
+
+    // Circle number
+    char cnum[4];
+    snprintf(cnum, sizeof cnum - 1, "%d", i + 1);
+    nvgSave(vg);
+    nvgFontFace(vg, "sans");
+    nvgFontSize(vg, 22);
+    nvgFillColor(vg, nvgRGBA(255, 255, 255, 255));
+    nvgTextAlign(vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+    nvgText(vg, circle->currentX, circle->currentY, cnum, NULL);
+    nvgRestore(vg);
   }
 
   // Draw the FPS counter
@@ -467,25 +480,25 @@ static int loadFromFile(FILE* file) {
     fscanf(file, "%d %d", &arrowSrc, &arrowDest);
 
     // Validate source circle
-    if (arrowSrc < 0 || arrowSrc > 20) {
+    if (arrowSrc < 1 || arrowSrc > 20) {
       fprintf(stderr, "error: arrow %d source out of range: %d\n", i, arrowSrc);
       return 1;
     }
 
     // Validate destination circle
-    if (arrowDest < 0 || arrowDest > 20) {
+    if (arrowDest < 1 || arrowDest > 20) {
       fprintf(stderr, "error: arrow %d destination out of range: %d\n", i, arrowDest);
       return 1;
     }
 
     // The source circle
-    struct circle* src = circles[arrowSrc];
+    struct circle* src = circles[arrowSrc - 1];
 
     // Go over arrows already on the source circle
     // We will coalesce duplicate arrows here
     int coalesced = 0;
     for (int j = 0; j < src->numUniqueArrows; ++j) {
-      if (src->arrows[j]->dest == circles[arrowDest]) {
+      if (src->arrows[j]->dest == circles[arrowDest - 1]) {
         // Coalesce it by incrementing the counts only
         src->arrows[j]->count++;
         src->numArrows++;
@@ -503,7 +516,7 @@ static int loadFromFile(FILE* file) {
       src->arrows = realloc(src->arrows, ++src->numUniqueArrows * sizeof(struct arrow*));
       src->arrows[newIndex] = calloc(1, sizeof(struct arrow));
       src->arrows[newIndex]->count = 1;
-      src->arrows[newIndex]->dest = circles[arrowDest];
+      src->arrows[newIndex]->dest = circles[arrowDest - 1];
       src->numArrows++;
     }
   }
@@ -549,6 +562,9 @@ static void promptAndLoadFile() {
 }
 
 int main() {
+  // Seed the RNG
+  srand(time(NULL));
+
   // Prompt and load from user-specified file
   promptAndLoadFile();
 
