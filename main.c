@@ -6,6 +6,7 @@
  * - I decided to approach this program like any multimedia application I've before (with a framebuffer window library like GLFW and a graphics API like OpenGL).
  * - I took this assignment as an opportunity to practice physics-based animation.
  * - The program is written in C99 with the glad, GLFW, and NanoVG libraries and the platform OpenGL implementation thing.
+ * - I have no qualms with global variables (mutable, even) in a simple single-threaded program.
  */
 
 #include <stdio.h>
@@ -26,6 +27,18 @@ static const int WINDOW_INIT_HEIGHT = 576;
 /** Title of the window. */
 static const char* WINDOW_TITLE = "Circles and Arrows IV: A New Hope";
 
+/** The latest computed frames per second. */
+static double perf_fps;
+
+/** The size of the sliding window for performance measurement. */
+#define PERF_WINDOW_SIZE 16
+
+/** The perf window. This holds past frame times. */
+static double perf_window[PERF_WINDOW_SIZE];
+
+/** The index of the current frame in the perf window. */
+static int perf_window_current;
+
 /** The GLFW window instance. */
 static GLFWwindow* window;
 
@@ -33,9 +46,30 @@ static GLFWwindow* window;
 static NVGcontext* vg;
 
 /**
+ * Draw the FPS count.
+ */
+static void drawFPS() {
+  char text[16];
+  snprintf(text, sizeof text - 1, "FPS: %.0f", perf_fps);
+
+  nvgSave(vg);
+
+  nvgFontFace(vg, "sans");
+  nvgFontSize(vg, 22);
+  nvgFillColor(vg, nvgRGBA(0, 0, 0, 220));
+  nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
+  nvgText(vg, 8, 8, text, NULL);
+
+  nvgRestore(vg);
+}
+
+/**
  * Initialize for rendering.
  */
 static void renderInit() {
+  // Set OpenGL clear color to white
+  glClearColor(1, 1, 1, 1);
+
   // Try to create a NanoVG drawing context
   // This library provides a canvas-style interface on top of OpenGL
   vg = nvgCreateGL3(NVG_ANTIALIAS | NVG_STENCIL_STROKES);
@@ -44,8 +78,8 @@ static void renderInit() {
     exit(1);
   }
 
-  // Set OpenGL clear color to black
-  glClearColor(0, 0, 0, 0);
+  // Set the sans-serif font in NanoVG
+  nvgCreateFont(vg, "sans", "Roboto-Regular.ttf");
 }
 
 /**
@@ -65,17 +99,19 @@ static void renderFrame() {
   int fbHeight;
   glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
 
-  // Clear the color buffer
-  // This erases the previous frame's rendered content
-  glClear(GL_COLOR_BUFFER_BIT);
+  // Update the OpenGL viewport dimensions
+  // Again, this would be more perfomant in a callback function
+  glViewport(0, 0, fbWidth, fbHeight);
+
+  // Clear all the buffers we use
+  // This erases the previous frame's rendered content and artifacts
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
   // Begin a new NanoVG frame
   nvgBeginFrame(vg, windowWidth, windowHeight, fbWidth / (float) windowWidth);
 
-  nvgBeginPath(vg);
-  nvgRoundedRect(vg, 0, 0, 50, 50, 10);
-  nvgFillColor(vg, nvgRGBA(255, 255, 255, 255));
-  nvgFill(vg);
+  // Draw the FPS counter
+  drawFPS();
 
   // End the NanoVG frame
   nvgEndFrame(vg);
@@ -125,13 +161,28 @@ int main() {
 
     // Break if window closure requested (e.g. via close button)
     // This causes the event loop to exit, and the window will close on program end
-    if (glfwWindowShouldClose(window))
+    if (glfwWindowShouldClose(window)) {
       break;
+    }
+
+    // Record time before rendering
+    double timeBeforeFrame = glfwGetTime();
 
     // Render the next frame
     renderFrame();
 
     // Swap the next frame in
     glfwSwapBuffers(window);
+
+    // Record frame time into perf window
+    perf_window[perf_window_current] = glfwGetTime() - timeBeforeFrame;
+    perf_window_current = ++perf_window_current % PERF_WINDOW_SIZE;
+
+    // Compute frames per second
+    perf_fps = 0;
+    for (int i = 0; i < PERF_WINDOW_SIZE; ++i) {
+      perf_fps += perf_window[i];
+    }
+    perf_fps = PERF_WINDOW_SIZE / perf_fps;
   }
 }
