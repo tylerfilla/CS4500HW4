@@ -27,6 +27,18 @@ static const int WINDOW_INIT_HEIGHT = 576;
 /** Title of the window. */
 static const char* WINDOW_TITLE = "Circles and Arrows IV: A New Hope";
 
+/** The GLFW window instance. */
+static GLFWwindow* window;
+
+/** The NanoVG drawing context. */
+static NVGcontext* vg;
+
+/** The latest framebuffer width. */
+static int fbWidth;
+
+/** The latest framebuffer height. */
+static int fbHeight;
+
 /** The latest computed frames per second. */
 static double perf_fps;
 
@@ -39,12 +51,6 @@ static double perf_window[PERF_WINDOW_SIZE];
 /** The index of the current frame in the perf window. */
 static int perf_window_current;
 
-/** The GLFW window instance. */
-static GLFWwindow* window;
-
-/** The NanoVG drawing context. */
-static NVGcontext* vg;
-
 /**
  * Draw the FPS count.
  */
@@ -56,9 +62,40 @@ static void drawFPS() {
 
   nvgFontFace(vg, "sans");
   nvgFontSize(vg, 22);
-  nvgFillColor(vg, nvgRGBA(0, 0, 0, 220));
+  nvgFillColor(vg, nvgRGBA(120, 120, 120, 255));
   nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
+
   nvgText(vg, 8, 8, text, NULL);
+
+  nvgRestore(vg);
+}
+
+/**
+ * Draw the loaded data info text.
+ */
+static void drawInfoText() {
+  // Line 1: File name
+  char line1[128];
+  snprintf(line1, sizeof line1 - 1, "File: %s", "/home/person/file.txt");
+
+  // Line 2: Number of circles
+  char line2[16];
+  snprintf(line2, sizeof line2 - 1, "Circles: %d", 10);
+
+  // Line 3: Number of arrows
+  char line3[16];
+  snprintf(line3, sizeof line3 - 1, "Arrows: %d", 10);
+
+  nvgSave(vg);
+
+  nvgFontFace(vg, "sans");
+  nvgFontSize(vg, 22);
+  nvgFillColor(vg, nvgRGBA(120, 120, 120, 255));
+  nvgTextAlign(vg, NVG_ALIGN_RIGHT | NVG_ALIGN_TOP);
+
+  nvgText(vg, fbWidth - 8, 8, line1, NULL);
+  nvgText(vg, fbWidth - 8, 8 + 22 + 2, line2, NULL);
+  nvgText(vg, fbWidth - 8, 8 + 22 + 2 + 22 + 2, line3, NULL);
 
   nvgRestore(vg);
 }
@@ -95,8 +132,6 @@ static void renderFrame() {
   // Query the framebuffer dimensions, as well
   // The framebuffer is part of the OpenGL context on this thread
   // It might actually have a different pixel count from the window due to DPI scaling
-  int fbWidth;
-  int fbHeight;
   glfwGetFramebufferSize(window, &fbWidth, &fbHeight);
 
   // Update the OpenGL viewport dimensions
@@ -112,6 +147,9 @@ static void renderFrame() {
 
   // Draw the FPS counter
   drawFPS();
+
+  // Draw loaded data info text
+  drawInfoText();
 
   // End the NanoVG frame
   nvgEndFrame(vg);
