@@ -9,7 +9,7 @@
  * - I have no qualms with global variables (mutable, even) in a simple single-threaded program.
  * - I did not try to draw arrowheads on self-referencing arcs.
  * - It has limited support for drawing multiple duplicate arrows. (only self-referencing)
- * - Accepts between 2 and 20 circles and between 0 and 1000000 arrows.
+ * - Accepts between 2 and 20 circles and between 2 and 100 arrows.
  * - Consequently, this turned into a vector math refresher :)
  */
 
@@ -66,6 +66,18 @@ static int perfWindowCurrent;
 /** The name of the loaded file. */
 static char fileName[256];
 
+/** The current circle marker. */
+static struct marker* marker;
+
+/** Gameplay state. The total number of marks on the board. */
+static int gameTotalNumMarks;
+
+/** Gameplay state. The current circle. */
+static int gameCurrentCircle;
+
+/** Gameplay state. The number of unique circles marked. */
+static int gameNumUniqueCirclesMarked;
+
 /**
  * One or more arrows.
  */
@@ -81,6 +93,9 @@ struct arrow {
  * A single circle.
  */
 struct circle {
+  /** The circle number. */
+  int number;
+
   /** The outgoing arrows. */
   struct arrow** arrows;
 
@@ -89,6 +104,9 @@ struct circle {
 
   /** The total number of outgoing arrows. */
   int numArrows;
+
+  /** The number of checkmarks on the circle. */
+  int numMarks;
 
   /** The circle size. Doubles as radius and mass. */
   float size;
@@ -113,6 +131,30 @@ struct circle {
 };
 
 /**
+ * A position marker. This is the ring shape that outlines the current circle as
+ * the game is played.
+ */
+struct marker {
+  /** The current x-coordinate of the marker. */
+  float currentX;
+
+  /** The current y-coordinate of the marker. */
+  float currentY;
+
+  /** The last x-coordinate of the marker. */
+  float lastX;
+
+  /** The last y-coordinate of the marker. */
+  float lastY;
+
+  /** The x-axis acceleration of the marker. */
+  float accelX;
+
+  /** The y-axis acceleration of the marker. */
+  float accelY;
+};
+
+/**
  * Update physics of the circles.
  */
 static void updateCirclePhysics() {
@@ -127,8 +169,8 @@ static void updateCirclePhysics() {
     // Subtract force due to friction (this is pretty hacky)
     // It uses *roughly* the current velocity and an arbitrary factor
     // Needless to say, it could be better!
-    forceX -= 30 * circle->size * (circle->currentX - circle->lastX);
-    forceY -= 30 * circle->size * (circle->currentY - circle->lastY);
+    forceX -= 50 * circle->size * (circle->currentX - circle->lastX);
+    forceY -= 50 * circle->size * (circle->currentY - circle->lastY);
 
     // Factor in circle-side repulsion
     forceX += 10000 * circle->size / fmax(1, circle->currentX);
@@ -178,8 +220,8 @@ static void updateCirclePhysics() {
       double targetDist = circle->size + circle->arrows[j]->dest->size + 150;
 
       // Add a spring force between these two
-      forceX += 100 * (dist - fmax(0, targetDist)) * -dx / dist;
-      forceY += 100 * (dist - fmax(0, targetDist)) * -dy / dist;
+      forceX += 10 * (dist - fmax(0, targetDist)) * -dx / dist;
+      forceY += 10 * (dist - fmax(0, targetDist)) * -dy / dist;
     }
 
     // Update acceleration of the circle based on its net force
@@ -204,6 +246,53 @@ static void updateCirclePhysics() {
     // Keep old positions for future integrations
     circle->lastX = tempX;
     circle->lastY = tempY;
+  }
+
+  // Net force of the marker
+  float forceX = 0;
+  float forceY = 0;
+
+  // Friction/damping on the marker
+  forceX -= 10000 * (marker->currentX - marker->lastX);
+  forceY -= 10000 * (marker->currentY - marker->lastY);
+
+  // Make the marker tend toward the current circle
+  {
+    struct circle* circle = circles[gameCurrentCircle - 1];
+
+    // Get displacement of marker from current circle
+    float dx = marker->currentX - circle->currentX;
+    float dy = marker->currentY - circle->currentY;
+
+    // Compute Euclidian distance between marker and current circle
+    double dist = sqrt(dx * dx + dy * dy);
+
+    // "Close enough" rejection like above
+    if (dist > 0.01) {
+      // Add a spring force between these two
+      forceX += 1000 * dist * -dx / dist;
+      forceY += 1000 * dist * -dy / dist;
+    }
+  }
+
+  // Update acceleration of the marker based on its net force
+  marker->accelX = forceX / 10;
+  marker->accelY = forceY / 10;
+
+  // Integrate new marker position
+  {
+    // Save a copy of the marker's current position
+    float tempX = marker->currentX;
+    float tempY = marker->currentY;
+
+    // Same deal as above
+    float delta = 1 / 60.0f;
+    marker->currentX += (marker->currentX - marker->lastX) + marker->accelX * delta * delta;
+    marker->currentY += (marker->currentY - marker->lastY) + marker->accelY * delta * delta;
+
+    // Keep old positions for future integrations
+    marker->lastX = tempX;
+    marker->lastY = tempY;
   }
 }
 
@@ -423,6 +512,13 @@ static void renderFrame() {
     nvgRestore(vg);
   }
 
+  // Marker ring
+  nvgBeginPath(vg);
+  nvgCircle(vg, marker->currentX, marker->currentY, 30);
+  nvgStrokeColor(vg, nvgRGBA(0, 200, 0, 255));
+  nvgStrokeWidth(vg, 4);
+  nvgStroke(vg);
+
   // Draw the FPS counter
   drawFps();
 
@@ -457,6 +553,7 @@ static int loadFromFile(FILE* file) {
   circles = calloc(numCircles, sizeof(struct circle*));
   for (int i = 0; i < numCircles; ++i) {
     circles[i] = calloc(1, sizeof(struct circle));
+    circles[i]->number = i + 1;
     circles[i]->currentX = circles[i]->lastX = rand() % WINDOW_INIT_WIDTH;
     circles[i]->currentY = circles[i]->lastY = rand() % WINDOW_INIT_HEIGHT;
     circles[i]->size = 20;
@@ -467,7 +564,7 @@ static int loadFromFile(FILE* file) {
   fscanf(file, "%d", &numArrows);
 
   // Validate arrow count
-  if (numArrows < 0 || numArrows > 1000000) {
+  if (numArrows < 2 || numArrows > 100) {
     fprintf(stderr, "error: arrow count out of range: %d\n", numArrows);
     return 1;
   }
@@ -521,7 +618,77 @@ static int loadFromFile(FILE* file) {
     }
   }
 
+  // Start on circle 1
+  gameCurrentCircle = 1;
+
+  // Create the marker over circle 1
+  marker = calloc(1, sizeof(struct marker));
+  marker->currentX = marker->lastX = circles[0]->currentX;
+  marker->currentY = marker->lastY = circles[0]->currentY;
+  marker->accelX = 0;
+  marker->accelY = 0;
+
   return 0;
+}
+
+/**
+ * Take a turn in the game.
+ */
+static void takeTurn() {
+  // The current circle
+  struct circle* circle = circles[gameCurrentCircle - 1];
+
+  // Increment marks on circle
+  circle->numMarks++;
+  gameTotalNumMarks++;
+
+  // Validate number of marks
+  if (gameTotalNumMarks > 1000000) {
+    fprintf(stderr, "error: maximum number of marks reached on circle %d\n", gameCurrentCircle);
+    exit(1);
+  }
+
+  // If current circle's counter just hit one
+  // This would indicate reaching the circle for the first time
+  if (circle->numMarks == 1) {
+    gameNumUniqueCirclesMarked++;
+    printf("game: reached circle %d for the first time\n", gameCurrentCircle);
+    printf("game: there are %d unique circles marked so far out of %d\n", gameNumUniqueCirclesMarked, numCircles);
+  }
+
+  // Assert positive arrow count
+  if (circle->numArrows == 0) {
+    fprintf(stderr, "error: circle %d has no output arrows\n", gameCurrentCircle);
+    fprintf(stderr, "error: the board is not strongly-connected\n");
+    exit(1);
+  }
+
+  // The "hat" from which we pick an arrow to follow
+  // Since I decided on a really stupid data structure for arrows, I'm stuck with this mess!
+  struct circle** hat = NULL;
+  int hatNum = 0;
+
+  // Collect all the arrows
+  for (int i = 0; i < circle->numUniqueArrows; ++i) {
+    for (int j = 0; j < circle->arrows[i]->count; ++j) {
+      hat = realloc(hat, ++hatNum * sizeof(struct circle*));
+      hat[hatNum - 1] = circle->arrows[i]->dest;
+    }
+  }
+
+  // Assert hat is allocated (hopefully we didn't run out of memory)
+  if (!hat) {
+    fprintf(stderr, "error: memory allocation failed when picking an arrow to follow\n");
+    exit(1);
+  }
+
+  // Pick a random arrow from the hat to follow and follow it
+  gameCurrentCircle = hat[rand() % hatNum]->number;
+
+  printf("game: go to circle %d\n", gameCurrentCircle);
+
+  // Clean up the hat
+  free(hat);
 }
 
 /**
@@ -604,8 +771,20 @@ int main() {
   // Initialize rendering state
   renderInit();
 
+  // Time of the last turn taken
+  double lastTurnTime = glfwGetTime();
+
   // Window event loop
   while (1) {
+    // If time since last turn exceeded ample time
+    if (glfwGetTime() - lastTurnTime > 1) {
+      // Take a turn
+      takeTurn();
+
+      // Remember last turn time
+      lastTurnTime = glfwGetTime();
+    }
+
     // Poll for user input events
     glfwPollEvents();
 
