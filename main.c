@@ -39,7 +39,7 @@ static const int WINDOW_INIT_WIDTH = 1024;
 static const int WINDOW_INIT_HEIGHT = 576;
 
 /** Title of the window. */
-static const char* WINDOW_TITLE = "Circles and Arrows IV: A New Hope";
+static const char* WINDOW_TITLE = "Circles and Arrows IV";
 
 /** The GLFW window instance. */
 static GLFWwindow* window;
