@@ -495,9 +495,10 @@ static void renderFrame() {
     }
 
     // Circle fill
+    float colorShift = circle->numMarks == 0 ? 0 : fmin(255, 50 + circle->numMarks * 40);
     nvgBeginPath(vg);
     nvgCircle(vg, circle->currentX, circle->currentY, circle->size);
-    nvgFillColor(vg, nvgRGBA(0, 0, 0, 255));
+    nvgFillColor(vg, nvgRGBA(colorShift, 0, colorShift, 255));
     nvgFill(vg);
 
     // Circle number
