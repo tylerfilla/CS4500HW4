@@ -13,6 +13,8 @@
  * - Consequently, this turned into a vector math refresher :)
  */
 
+#define _USE_MATH_DEFINES
+
 #include <math.h>
 #include <stdio.h>
 #include <time.h>
