@@ -1,16 +1,148 @@
 /*
  * Tyler Filla
- * Due 11 March 2019 <-- LOOK AT THIS TYLER <--- DON'T LOSE SIGHT OF THIS !!!!!!! TODO
+ * March 11, 2019
+ * CS 4500-001 :: Intro to Software Profession
  *
- * Ideas for Opening Comment
- * - I decided to approach this program like any multimedia application I've before (with a framebuffer window library like GLFW and a graphics API like OpenGL).
- * - I took this assignment as an opportunity to practice physics-based animation.
- * - The program is written in C99 with the glad, GLFW, and NanoVG libraries and the platform OpenGL implementation thing.
- * - I have no qualms with global variables (mutable, even) in a simple single-threaded program.
- * - I did not try to draw arrowheads on self-referencing arcs.
- * - It has limited support for drawing multiple duplicate arrows. (only self-referencing)
- * - Accepts between 2 and 20 circles and between 2 and 100 arrows.
- * - Consequently, this turned into a vector math refresher :)
+ * [ FOREWORD ]
+ *
+ * For this project, I took a different approach by placing more emphasis on
+ * multimedia programming in the C99 programming language. I decided to use a
+ * vector graphics library which I have not used before: NanoVG. I have prior
+ * experience with OpenGL, the graphics API on which NanoVG operates, so I used
+ * the GLFW library to create a framebuffer window and the glad library to load
+ * modern OpenGL functionality. I took the opportunity to add a physics-based
+ * animation layer, as well, for more visually-appealing graphics. Consequently,
+ * this project turned into a linear algebra refresher for me!
+ *
+ * The program compiles as C99 on GNU/clang toolchains and as C++ on MSVC. For
+ * ease of building platform-independently, I have packaged a CMake build script
+ * to call the compiler and/or linker programs on the host.
+ *
+ * Also, since this is a simple single-threaded program in one source file, and
+ * since I have no intent to modify the program in the future, I made the
+ * decision to use mutable global variables to keep state. Most multimedia demo
+ * programs do, as well.
+ *
+ * [ DESCRIPTION ]
+ *
+ * This program intends to implement the game developed in past homework
+ * assignments and this assignment. The user is (re-)prompted for an input file
+ * as previously specified in past homework assignments until one successfully
+ * loads. When a file loads, the display window will open to demonstrate the
+ * gameplay in a visual manner. When gameplay concludes, the window remains open
+ * until the user presses ENTER.
+ *
+ * Keep an eye on the console (terminal, command prompt, DOS, etc.) window for
+ * real-time commentary of the game during gameplay.
+ *
+ * [ EXTERNALS ]
+ *
+ * This program draws text, and I decided to package a font with it instead of
+ * hardcoding font search paths or interacting with system APIs to get fonts.
+ * The font file "Roboto-Regular.ttf" must be in the current working directory.
+ *
+ * IF NO TEXT SHOWS UP ON THE DISPLAY WINDOW, ENSURE THE FONT FILE IS IN THE
+ * CURRENT WORKING DIRECTORY OF THE PROCESS.
+ *
+ * [ INTERNALS ]
+ *
+ * This program uses a different representation for circles and arrows. I
+ * originally intended to support drawing multiple arrows between pairs of
+ * circles with perpendicular offsets, but, due to time considerations, I
+ * abandoned this. However, the data structures remain tailored to this use
+ * case.
+ *
+ * A "circle" struct represents a single loaded circle. It has an array of
+ * pointers to "arrow" structs. Each arrow struct contains a pointer to a
+ * destination circle struct and a multiplier (see previous paragraph) that
+ * indicates the number of arrows with this source and destination (duplicates).
+ *
+ * [ INPUT ]
+ *
+ * The input file must conform to the format established in HW1. Furthermore,
+ * this program does NOT validate the file for strong connectedness. The program
+ * will exit gracefully when a circle with no exit is encountered during
+ * gameplay.
+ *
+ * Good Example
+ *
+ * 2
+ * 2
+ * 1 2
+ * 2 1
+ *
+ * Bad Example
+ *
+ * 2
+ * 100
+ * 1 2
+ * 2 1
+ *
+ * This file will not be accepted, as there are not enough definitions to match
+ * the 100 declared arrows.
+ *
+ * [ LIMITATIONS ]
+ *
+ * - Non-self-referencing arrows overlap when drawn. Need more time.
+ * - Arrowheads are not drawn for self-referencing arrows. Need more time.
+ *
+ * [ LICENSING ]
+ *
+ * This source file is dedicated to the public domain where it is valid to do
+ * so. At your option, the copyright holder offers this source file under the
+ * MIT license.
+ *
+ * The following third-party works were used.
+ *
+ * === Roboto Regular (font) ===
+ *
+ * Apache License 2.0
+ * See https://fonts.google.com/specimen/Roboto
+ *
+ * === glad OpenGL loader (generated code, static library) ===
+ *
+ * Public domain
+ * See https://github.com/Dav1dde/glad/issues/101
+ *
+ * === GLFW (static library) ===
+ *
+ * Copyright (c) 2002-2006 Marcus Geelnard
+ * Copyright (c) 2006-2016 Camilla Berglund <elmindreda@glfw.org>
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty. In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ *
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would
+ *    be appreciated but is not required.
+ *
+ * 2. Altered source versions must be plainly marked as such, and must not
+ *    be misrepresented as being the original software.
+ *
+ * 3. This notice may not be removed or altered from any source
+ *    distribution.
+ *
+ * === NanoVG (static library) ===
+ *
+ * This software is provided 'as-is', without any express or implied
+ * warranty.  In no event will the authors be held liable for any damages
+ * arising from the use of this software.
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely, subject to the following restrictions:
+ * 1. The origin of this software must not be misrepresented; you must not
+ *    claim that you wrote the original software. If you use this software
+ *    in a product, an acknowledgment in the product documentation would be
+ *    appreciated but is not required.
+ * 2. Altered source versions must be plainly marked as such, and must not be
+ *    misrepresented as being the original software.
+ * 3. This notice may not be removed or altered from any source distribution.
  */
 
 #define _USE_MATH_DEFINES
@@ -216,7 +348,7 @@ static void updateCirclePhysics() {
       float dx = circle->currentX - circle->arrows[j]->dest->currentX;
       float dy = circle->currentY - circle->arrows[j]->dest->currentY;
 
-      // Compute Euclidian distance between circles
+      // Compute Euclidean distance between circles
       double dist = sqrt(dx * dx + dy * dy);
 
       // "Close enough" rejection like above
@@ -272,7 +404,7 @@ static void updateCirclePhysics() {
     float dx = marker->currentX - circle->currentX;
     float dy = marker->currentY - circle->currentY;
 
-    // Compute Euclidian distance between marker and current circle
+    // Compute Euclidean distance between marker and current circle
     double dist = sqrt(dx * dx + dy * dy);
 
     // "Close enough" rejection like above
@@ -609,108 +741,6 @@ static void renderFrame() {
 }
 
 /**
- * Load from the given input file.
- *
- * @param file The input file
- * @return Zero on success, otherwise nonzero
- */
-static int loadFromFile(FILE* file) {
-  if (!file)
-    return 1;
-
-  // Read circle count
-  fscanf(file, "%d", &numCircles);
-
-  // Validate circle count
-  if (numCircles < 2 || numCircles > 20) {
-    fprintf(stderr, "error: circle count out of range: %d\n", numCircles);
-    numCircles = 0;
-    return 1;
-  }
-
-  // Allocate circles
-  circles = calloc(numCircles, sizeof(struct circle*));
-  for (int i = 0; i < numCircles; ++i) {
-    circles[i] = calloc(1, sizeof(struct circle));
-    circles[i]->number = i + 1;
-    circles[i]->currentX = circles[i]->lastX = rand() % WINDOW_INIT_WIDTH;
-    circles[i]->currentY = circles[i]->lastY = rand() % WINDOW_INIT_HEIGHT;
-    circles[i]->size = 20;
-  }
-
-  // Read arrow count
-  int numArrows;
-  fscanf(file, "%d", &numArrows);
-
-  // Validate arrow count
-  if (numArrows < 2 || numArrows > 100) {
-    fprintf(stderr, "error: arrow count out of range: %d\n", numArrows);
-    return 1;
-  }
-
-  // Read in arrows one-by-one
-  for (int i = 0; i < numArrows; ++i) {
-    // Read one arrow line
-    int arrowSrc;
-    int arrowDest;
-    fscanf(file, "%d %d", &arrowSrc, &arrowDest);
-
-    // Validate source circle
-    if (arrowSrc < 1 || arrowSrc > 20) {
-      fprintf(stderr, "error: arrow %d source out of range: %d\n", i, arrowSrc);
-      return 1;
-    }
-
-    // Validate destination circle
-    if (arrowDest < 1 || arrowDest > 20) {
-      fprintf(stderr, "error: arrow %d destination out of range: %d\n", i, arrowDest);
-      return 1;
-    }
-
-    // The source circle
-    struct circle* src = circles[arrowSrc - 1];
-
-    // Go over arrows already on the source circle
-    // We will coalesce duplicate arrows here
-    int coalesced = 0;
-    for (int j = 0; j < src->numUniqueArrows; ++j) {
-      if (src->arrows[j]->dest == circles[arrowDest - 1]) {
-        // Coalesce it by incrementing the counts only
-        src->arrows[j]->count++;
-        src->numArrows++;
-        coalesced = 1;
-        break;
-      }
-    }
-
-    // If arrow was not coalesced
-    // We need to add a new arrow here
-    if (!coalesced) {
-      int newIndex = src->numUniqueArrows;
-
-      // Tack on another arrow pointer for a new arrow
-      src->arrows = realloc(src->arrows, ++src->numUniqueArrows * sizeof(struct arrow*));
-      src->arrows[newIndex] = calloc(1, sizeof(struct arrow));
-      src->arrows[newIndex]->count = 1;
-      src->arrows[newIndex]->dest = circles[arrowDest - 1];
-      src->numArrows++;
-    }
-  }
-
-  // Start on circle 1
-  gameCurrentCircle = 1;
-
-  // Create the marker over circle 1
-  marker = calloc(1, sizeof(struct marker));
-  marker->currentX = marker->lastX = circles[0]->currentX;
-  marker->currentY = marker->lastY = circles[0]->currentY;
-  marker->accelX = 0;
-  marker->accelY = 0;
-
-  return 0;
-}
-
-/**
  * Take a turn in the game.
  */
 static void takeTurn() {
@@ -780,6 +810,113 @@ static void takeTurn() {
     numMarks += circles[i]->numMarks;
   }
   gameAvgChecksSingle = numMarks / numCircles;
+}
+
+/**
+ * Load from the given input file.
+ *
+ * @param file The input file
+ * @return Zero on success, otherwise nonzero
+ */
+static int loadFromFile(FILE* file) {
+  if (!file)
+    return 1;
+
+  // Read circle count
+  fscanf(file, "%d", &numCircles);
+
+  // Validate circle count
+  if (numCircles < 2 || numCircles > 20) {
+    fprintf(stderr, "error: circle count out of range: %d\n", numCircles);
+    numCircles = 0;
+    return 1;
+  }
+
+  // Allocate circles
+  circles = calloc(numCircles, sizeof(struct circle*));
+  for (int i = 0; i < numCircles; ++i) {
+    circles[i] = calloc(1, sizeof(struct circle));
+    circles[i]->number = i + 1;
+    circles[i]->currentX = circles[i]->lastX = rand() % WINDOW_INIT_WIDTH;
+    circles[i]->currentY = circles[i]->lastY = rand() % WINDOW_INIT_HEIGHT;
+    circles[i]->size = 20;
+  }
+
+  // Read arrow count
+  int numArrows;
+  fscanf(file, "%d", &numArrows);
+
+  // Validate arrow count
+  if (numArrows < 2 || numArrows > 100) {
+    fprintf(stderr, "error: arrow count out of range: %d\n", numArrows);
+    return 1;
+  }
+
+  // Read in arrows one-by-one
+  for (int i = 0; i < numArrows; ++i) {
+    if (feof(file)) {
+      fprintf(stderr, "error: premature eof reading arrows\n");
+      return 1;
+    }
+
+    // Read one arrow line
+    int arrowSrc;
+    int arrowDest;
+    fscanf(file, "%d %d", &arrowSrc, &arrowDest);
+
+    // Validate source circle
+    if (arrowSrc < 1 || arrowSrc > 20) {
+      fprintf(stderr, "error: arrow %d source out of range: %d\n", i, arrowSrc);
+      return 1;
+    }
+
+    // Validate destination circle
+    if (arrowDest < 1 || arrowDest > 20) {
+      fprintf(stderr, "error: arrow %d destination out of range: %d\n", i, arrowDest);
+      return 1;
+    }
+
+    // The source circle
+    struct circle* src = circles[arrowSrc - 1];
+
+    // Go over arrows already on the source circle
+    // We will coalesce duplicate arrows here
+    int coalesced = 0;
+    for (int j = 0; j < src->numUniqueArrows; ++j) {
+      if (src->arrows[j]->dest == circles[arrowDest - 1]) {
+        // Coalesce it by incrementing the counts only
+        src->arrows[j]->count++;
+        src->numArrows++;
+        coalesced = 1;
+        break;
+      }
+    }
+
+    // If arrow was not coalesced
+    // We need to add a new arrow here
+    if (!coalesced) {
+      int newIndex = src->numUniqueArrows;
+
+      // Tack on another arrow pointer for a new arrow
+      src->arrows = realloc(src->arrows, ++src->numUniqueArrows * sizeof(struct arrow*));
+      src->arrows[newIndex] = calloc(1, sizeof(struct arrow));
+      src->arrows[newIndex]->count = 1;
+      src->arrows[newIndex]->dest = circles[arrowDest - 1];
+      src->numArrows++;
+    }
+  }
+
+  // Start on circle 1
+  gameCurrentCircle = 1;
+
+  // Create the marker over circle 1
+  marker = calloc(1, sizeof(struct marker));
+  marker->currentX = marker->lastX = circles[0]->currentX;
+  marker->currentY = marker->lastY = circles[0]->currentY;
+  marker->accelX = 0;
+  marker->accelY = 0;
+
+  return 0;
 }
 
 /**
