@@ -78,6 +78,12 @@ static int gameCurrentCircle;
 /** Gameplay state. The number of unique circles marked. */
 static int gameNumUniqueCirclesMarked;
 
+/** Gameplay statistic. The maximum number of checks on a single circle. */
+static int gameMaxChecksSingle;
+
+/** Gameplay statistic. The average number of checks on a single circle. */
+static float gameAvgChecksSingle;
+
 /**
  * One or more arrows.
  */
@@ -356,6 +362,61 @@ static void drawInfoText() {
   nvgRestore(vg);
 }
 
+static void drawConcludeText() {
+  nvgSave(vg);
+
+  nvgFontFace(vg, "sans");
+  nvgFontSize(vg, 22);
+  nvgFillColor(vg, nvgRGBA(0, 0, 0, 255));
+  nvgTextAlign(vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+  nvgText(vg, fbWidth / 2, 3 * fbHeight / 4, "GAME OVER", NULL);
+  nvgText(vg, fbWidth / 2, 3 * fbHeight / 4 + 22 + 2, "Press ENTER to exit", NULL);
+
+  nvgRestore(vg);
+}
+
+/**
+ * Draw the running statistics text.
+ */
+static void drawStatsText() {
+  // Line 1: Current circle number
+  char line1[128];
+  snprintf(line1, sizeof line1 - 1, "Current circle: %d", gameCurrentCircle);
+
+  // Line 2: Unique circles marked
+  char line2[128];
+  snprintf(line2, sizeof line2 - 1, "Unique circles marked: %d", gameNumUniqueCirclesMarked);
+
+  // Line 3: Total number of checks
+  char line3[128];
+  snprintf(line3, sizeof line3 - 1, "Total checks on screen: %d", gameTotalNumMarks);
+
+  // Line 4: Total number of checks on one circle
+  char line4[128];
+  snprintf(line4, sizeof line4 - 1, "Maximum checks on one circle: %d", gameMaxChecksSingle);
+
+  // Line 5: Average number of checks on one circle
+  char line5[128];
+  snprintf(line5, sizeof line4 - 1, "Average checks on one circle: %.1f", gameAvgChecksSingle);
+
+  nvgSave(vg);
+
+  // Set text properties
+  nvgFontFace(vg, "sans");
+  nvgFontSize(vg, 22);
+  nvgFillColor(vg, nvgRGBA(120, 120, 120, 255));
+  nvgTextAlign(vg, NVG_ALIGN_RIGHT | NVG_ALIGN_BOTTOM);
+
+  // Draw lines of text
+  nvgText(vg, fbWidth - 8, fbHeight - (8 + 22 + 2 + 22 + 2 + 22 + 2 + 22 + 2), line1, NULL);
+  nvgText(vg, fbWidth - 8, fbHeight - (8 + 22 + 2 + 22 + 2 + 22 + 2), line2, NULL);
+  nvgText(vg, fbWidth - 8, fbHeight - (8 + 22 + 2 + 22 + 2), line3, NULL);
+  nvgText(vg, fbWidth - 8, fbHeight - (8 + 22 + 2), line4, NULL);
+  nvgText(vg, fbWidth - 8, fbHeight - (8), line5, NULL);
+
+  nvgRestore(vg);
+}
+
 /**
  * Initialize for rendering.
  */
@@ -511,20 +572,35 @@ static void renderFrame() {
     nvgTextAlign(vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
     nvgText(vg, circle->currentX, circle->currentY, cnum, NULL);
     nvgRestore(vg);
+
+    // Mark number
+    char marks[4];
+    snprintf(marks, sizeof marks - 1, "%d", circle->numMarks);
+    nvgSave(vg);
+    nvgFontFace(vg, "sans");
+    nvgFontSize(vg, 18);
+    nvgFillColor(vg, nvgRGBA(0, 0, 0, 255));
+    nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
+    nvgText(vg, circle->currentX - 1.5 * circle->size, circle->currentY - 1.5 * circle->size, marks, NULL);
+    nvgRestore(vg);
   }
 
   // Marker ring
   nvgBeginPath(vg);
-  nvgCircle(vg, marker->currentX, marker->currentY, 30);
+  nvgCircle(vg, marker->currentX, marker->currentY, 50);
   nvgStrokeColor(vg, nvgRGBA(0, 200, 0, 255));
   nvgStrokeWidth(vg, 4);
   nvgStroke(vg);
 
-  // Draw the FPS counter
+  // Draw text features
   drawFps();
-
-  // Draw loaded data info text
   drawInfoText();
+  drawStatsText();
+
+  // Draw game over text when the game ends
+  if (gameNumUniqueCirclesMarked >= numCircles) {
+    drawConcludeText();
+  }
 
   // End the NanoVG frame
   nvgEndFrame(vg);
@@ -657,6 +733,11 @@ static void takeTurn() {
     printf("game: there are %d unique circles marked so far out of %d\n", gameNumUniqueCirclesMarked, numCircles);
   }
 
+  // Keep maximum mark count up to date
+  if (circle->numMarks > gameMaxChecksSingle) {
+    gameMaxChecksSingle = circle->numMarks;
+  }
+
   // Assert positive arrow count
   if (circle->numArrows == 0) {
     fprintf(stderr, "error: circle %d has no output arrows\n", gameCurrentCircle);
@@ -690,6 +771,13 @@ static void takeTurn() {
 
   // Clean up the hat
   free(hat);
+
+  // Update average single circle mark count
+  float numMarks = 0;
+  for (int i = 0; i < numCircles; ++i) {
+    numMarks += circles[i]->numMarks;
+  }
+  gameAvgChecksSingle = numMarks / numCircles;
 }
 
 /**
@@ -729,6 +817,20 @@ static void promptAndLoadFile() {
   } while (1);
 }
 
+/**
+ * The GLFW key callback for the graphics window.
+ */
+static void windowKeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+  // If enter key was pressed
+  if (key == GLFW_KEY_ENTER && action == GLFW_PRESS) {
+    // If game is over
+    if (gameNumUniqueCirclesMarked >= numCircles) {
+      // Then kill the program
+      exit(0);
+    }
+  }
+}
+
 int main() {
   // Seed the RNG
   srand(time(NULL));
@@ -757,6 +859,9 @@ int main() {
     return 1;
   }
 
+  // Add key callback
+  glfwSetKeyCallback(window, windowKeyCallback);
+
   // The new window has an OpenGL context associated with it for rendering
   // Make this context, via the window object, current on this thread
   // All future calls to OpenGL functions on this thread will affect this window
@@ -779,8 +884,12 @@ int main() {
   while (1) {
     // If time since last turn exceeded ample time
     if (glfwGetTime() - lastTurnTime > 1) {
-      // Take a turn
-      takeTurn();
+      if (gameNumUniqueCirclesMarked >= numCircles) {
+        printf("The game is complete.\n");
+      } else {
+        // Take a turn
+        takeTurn();
+      }
 
       // Remember last turn time
       lastTurnTime = glfwGetTime();
